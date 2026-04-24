@@ -1,0 +1,10 @@
+# k8s/ollama-backend/service.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: ollama
+  namespace: default
+spec:
+  ports:
+    - port: 11434
+      targetPort: 11434
