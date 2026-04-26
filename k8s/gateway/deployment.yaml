@@ -15,7 +15,7 @@ spec:
     spec:
       containers:
         - name: llm-gateway
-          image: rcabe005/llm-gateway:0.1.0
+          image: rcabe005/llm-gateway:0.1.1
           imagePullPolicy: Always
           ports:
             - containerPort: 8080
