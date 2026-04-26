@@ -1,0 +1,26 @@
+# k8s/gateway/deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: llm-gateway
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: llm-gateway
+  template:
+    metadata:
+      labels:
+        app: llm-gateway
+    spec:
+      containers:
+        - name: llm-gateway
+          image: rcabe005/llm-gateway:0.1.0
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8080
+          env:
+            - name: OLLAMA_BASE_URL
+              value: "http://ollama:11434"
+            - name: DEFAULT_MODEL
+              value: "mistral:7b"

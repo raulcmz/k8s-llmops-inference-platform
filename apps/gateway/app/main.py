@@ -6,9 +6,28 @@ import httpx
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 
+from prometheus_client import Counter, Histogram, generate_latest
+from fastapi.responses import Response
+
 
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://ollama:11434")
 DEFAULT_MODEL = os.getenv("DEFAULT_MODEL", "mistral:7b")
+
+REQUEST_COUNT = Counter(
+    "llm_requests_total",
+    "Total LLM requests",
+    ["model"]
+)
+
+ERROR_COUNT = Counter(
+    "llm_errors_total",
+    "Total LLM errors",
+)
+
+REQUEST_LATENCY = Histogram(
+    "llm_request_latency_seconds",
+    "LLM request latency",
+)
 
 
 app = FastAPI(
@@ -53,6 +72,8 @@ async def chat(request: ChatRequest):
     model = request.model or DEFAULT_MODEL
     url = f"{OLLAMA_BASE_URL}/api/generate"
 
+    REQUEST_COUNT.labels(model=model).inc()
+
     payload = {
         "model": model,
         "prompt": request.prompt,
@@ -62,21 +83,28 @@ async def chat(request: ChatRequest):
     start = time.perf_counter()
 
     try:
-        async with httpx.AsyncClient(timeout=120) as client:
-            response = await client.post(url, json=payload)
+        with REQUEST_LATENCY.time():
+            async with httpx.AsyncClient(timeout=120) as client:
+                response = await client.post(url, json=payload)
 
-            if response.status_code >= 400:
-                raise HTTPException(
-                    status_code=502,
-                    detail={
-                        "backend_status": response.status_code,
-                        "backend_body": response.text,
-                    },
-                )
+                if response.status_code >= 400:
+                    ERROR_COUNT.inc()  # ← cuenta error aquí
+                    raise HTTPException(
+                        status_code=502,
+                        detail={
+                            "backend_status": response.status_code,
+                            "backend_body": response.text,
+                        },
+                    )
 
-            data = response.json()
+                data = response.json()
+
     except httpx.RequestError as exc:
-        raise HTTPException(status_code=502, detail=f"Backend connection error: {exc}")
+        ERROR_COUNT.inc()  # ← cuenta error aquí también
+        raise HTTPException(
+            status_code=502,
+            detail=f"Backend connection error: {exc}"
+        )
 
     latency_ms = round((time.perf_counter() - start) * 1000, 2)
 
@@ -85,3 +113,7 @@ async def chat(request: ChatRequest):
         response=data.get("response", ""),
         latency_ms=latency_ms,
     )
+
+@app.get("/metrics")
+def metrics():
+    return Response(generate_latest(), media_type="text/plain")
