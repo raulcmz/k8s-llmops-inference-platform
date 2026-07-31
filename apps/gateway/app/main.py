@@ -4,19 +4,20 @@ from typing import Optional
 
 import httpx
 from fastapi import FastAPI, HTTPException
+from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, Field
-
 from prometheus_client import Counter, Histogram, generate_latest
-from fastapi.responses import Response
 
 
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://ollama:11434")
 DEFAULT_MODEL = os.getenv("DEFAULT_MODEL", "mistral:7b")
+# Keep readiness checks cheap so probes do not overload the backend.
+READY_CHECK_TIMEOUT_SECONDS = float(os.getenv("READY_CHECK_TIMEOUT_SECONDS", "2"))
 
 REQUEST_COUNT = Counter(
     "llm_requests_total",
     "Total LLM requests",
-    ["model"]
+    ["model"],
 )
 
 ERROR_COUNT = Counter(
@@ -33,7 +34,7 @@ REQUEST_LATENCY = Histogram(
 app = FastAPI(
     title="Internal LLM Gateway",
     description="A Kubernetes-native internal gateway for LLM backends.",
-    version="0.1.0",
+    version="0.2.0",
 )
 
 
@@ -49,9 +50,54 @@ class ChatResponse(BaseModel):
     backend: str = "ollama"
 
 
-@app.get("/health")
+class HealthResponse(BaseModel):
+    status: str
+
+
+class ReadyResponse(BaseModel):
+    status: str
+    backend: str
+    backend_url: str
+
+
+async def backend_is_reachable() -> tuple[bool, str]:
+    """Return (ok, detail) for a lightweight backend readiness check."""
+    url = f"{OLLAMA_BASE_URL}/api/tags"
+    try:
+        async with httpx.AsyncClient(timeout=READY_CHECK_TIMEOUT_SECONDS) as client:
+            response = await client.get(url)
+            if response.status_code < 400:
+                return True, "backend reachable"
+            return False, f"backend status {response.status_code}"
+    except httpx.HTTPError as exc:
+        return False, f"backend unreachable: {exc}"
+
+
+@app.get("/health", response_model=HealthResponse)
 def health():
-    return {"status": "ok"}
+    """Liveness: process is up. Does not check the LLM backend."""
+    return HealthResponse(status="ok")
+
+
+@app.get("/ready", response_model=ReadyResponse)
+async def ready():
+    """Readiness: gateway can accept traffic only if the backend responds."""
+    ok, detail = await backend_is_reachable()
+    if not ok:
+        return JSONResponse(
+            status_code=503,
+            content={
+                "status": "not_ready",
+                "backend": "ollama",
+                "backend_url": OLLAMA_BASE_URL,
+                "detail": detail,
+            },
+        )
+    return ReadyResponse(
+        status="ready",
+        backend="ollama",
+        backend_url=OLLAMA_BASE_URL,
+    )
 
 
 @app.get("/models")
@@ -88,7 +134,7 @@ async def chat(request: ChatRequest):
                 response = await client.post(url, json=payload)
 
                 if response.status_code >= 400:
-                    ERROR_COUNT.inc()  # ← cuenta error aquí
+                    ERROR_COUNT.inc()
                     raise HTTPException(
                         status_code=502,
                         detail={
@@ -100,10 +146,10 @@ async def chat(request: ChatRequest):
                 data = response.json()
 
     except httpx.RequestError as exc:
-        ERROR_COUNT.inc()  # ← cuenta error aquí también
+        ERROR_COUNT.inc()
         raise HTTPException(
             status_code=502,
-            detail=f"Backend connection error: {exc}"
+            detail=f"Backend connection error: {exc}",
         )
 
     latency_ms = round((time.perf_counter() - start) * 1000, 2)
@@ -113,6 +159,7 @@ async def chat(request: ChatRequest):
         response=data.get("response", ""),
         latency_ms=latency_ms,
     )
+
 
 @app.get("/metrics")
 def metrics():
