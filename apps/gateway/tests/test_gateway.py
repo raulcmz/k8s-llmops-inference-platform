@@ -107,6 +107,44 @@ def test_chat_ok_with_explicit_model(client: TestClient, backend_url: str):
 
 
 @respx.mock
+def test_chat_exposes_backend_token_and_timing_stats(
+    client: TestClient, backend_url: str
+):
+    """Non-stream Ollama stats are surfaced honestly (not as TTFT)."""
+    respx.post(f"{backend_url}/api/generate").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "response": "hola",
+                "prompt_eval_count": 12,
+                "eval_count": 4,
+                # Ollama reports durations in nanoseconds.
+                "prompt_eval_duration": 100_000_000,
+                "eval_duration": 250_000_000,
+                "total_duration": 400_000_000,
+            },
+        )
+    )
+
+    response = client.post("/chat", json={"prompt": "di hola"})
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["prompt_tokens"] == 12
+    assert body["completion_tokens"] == 4
+    assert body["backend_prompt_eval_ms"] == 100.0
+    assert body["backend_eval_ms"] == 250.0
+    assert body["backend_total_ms"] == 400.0
+
+    metrics = client.get("/metrics").text
+    assert "llm_prompt_tokens_total" in metrics
+    assert "llm_completion_tokens_total" in metrics
+    assert "llm_request_duration_seconds" in metrics
+    assert "llm_backend_prompt_eval_seconds" in metrics
+    assert "ttft" not in metrics.lower()
+
+
+@respx.mock
 def test_chat_502_when_backend_returns_error(client: TestClient, backend_url: str):
     respx.post(f"{backend_url}/api/generate").mock(
         return_value=httpx.Response(500, text="boom")
@@ -117,6 +155,10 @@ def test_chat_502_when_backend_returns_error(client: TestClient, backend_url: st
     assert response.status_code == 502
     detail = response.json()["detail"]
     assert detail["backend_status"] == 500
+    assert detail["error_type"] == "backend_http"
+
+    metrics = client.get("/metrics").text
+    assert 'llm_errors_total{error_type="backend_http"}' in metrics
 
 
 @respx.mock
@@ -128,4 +170,25 @@ def test_chat_502_when_backend_unreachable(client: TestClient, backend_url: str)
     response = client.post("/chat", json={"prompt": "hola"})
 
     assert response.status_code == 502
-    assert "Backend connection error" in response.json()["detail"]
+    detail = response.json()["detail"]
+    assert detail["error_type"] == "connect"
+    assert "Backend connection error" in detail["message"]
+
+    metrics = client.get("/metrics").text
+    assert 'llm_errors_total{error_type="connect"}' in metrics
+
+
+@respx.mock
+def test_chat_502_on_timeout(client: TestClient, backend_url: str):
+    respx.post(f"{backend_url}/api/generate").mock(
+        side_effect=httpx.TimeoutException("timed out")
+    )
+
+    response = client.post("/chat", json={"prompt": "hola"})
+
+    assert response.status_code == 502
+    detail = response.json()["detail"]
+    assert detail["error_type"] == "timeout"
+
+    metrics = client.get("/metrics").text
+    assert 'llm_errors_total{error_type="timeout"}' in metrics
