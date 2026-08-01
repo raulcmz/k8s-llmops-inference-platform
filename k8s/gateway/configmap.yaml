@@ -1,0 +1,17 @@
+# Non-secret gateway runtime config (12-factor: config via environment).
+# Change values here and restart/rollout the Deployment — no image rebuild needed
+# for URL/model/timeouts.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: llm-gateway-config
+  namespace: default
+  labels:
+    app: llm-gateway
+data:
+  # In-cluster DNS name of the manual Service/Endpoints for Ollama (lab).
+  OLLAMA_BASE_URL: "http://ollama:11434"
+  DEFAULT_MODEL: "mistral:7b"
+  READY_CHECK_TIMEOUT_SECONDS: "2"
+  MODELS_TIMEOUT_SECONDS: "10"
+  CHAT_TIMEOUT_SECONDS: "120"
