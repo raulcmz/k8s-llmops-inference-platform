@@ -1,8 +1,15 @@
-# k8s/gateway/deployment.yaml
+# llm-gateway Deployment
+#
+# Requires a container image that includes /health and /ready (T1+).
+# The published tag below may be older than main; rebuild/push before
+# relying on readiness probes in a real cluster.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: llm-gateway
+  namespace: default
+  labels:
+    app: llm-gateway
 spec:
   replicas: 1
   selector:
@@ -18,9 +25,31 @@ spec:
           image: rcabe005/llm-gateway:0.1.1
           imagePullPolicy: Always
           ports:
-            - containerPort: 8080
-          env:
-            - name: OLLAMA_BASE_URL
-              value: "http://ollama:11434"
-            - name: DEFAULT_MODEL
-              value: "mistral:7b"
+            - name: http
+              containerPort: 8080
+          envFrom:
+            - configMapRef:
+                name: llm-gateway-config
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 2
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 15
+            timeoutSeconds: 2
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
