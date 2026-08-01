@@ -1,3 +1,5 @@
+import json
+
 import httpx
 import respx
 from fastapi.testclient import TestClient
@@ -118,7 +120,6 @@ def test_chat_exposes_backend_token_and_timing_stats(
                 "response": "hola",
                 "prompt_eval_count": 12,
                 "eval_count": 4,
-                # Ollama reports durations in nanoseconds.
                 "prompt_eval_duration": 100_000_000,
                 "eval_duration": 250_000_000,
                 "total_duration": 400_000_000,
@@ -141,7 +142,6 @@ def test_chat_exposes_backend_token_and_timing_stats(
     assert "llm_completion_tokens_total" in metrics
     assert "llm_request_duration_seconds" in metrics
     assert "llm_backend_prompt_eval_seconds" in metrics
-    assert "ttft" not in metrics.lower()
 
 
 @respx.mock
@@ -158,7 +158,8 @@ def test_chat_502_when_backend_returns_error(client: TestClient, backend_url: st
     assert detail["error_type"] == "backend_http"
 
     metrics = client.get("/metrics").text
-    assert 'llm_errors_total{error_type="backend_http"}' in metrics
+    assert 'error_type="backend_http"' in metrics
+    assert 'mode="non_stream"' in metrics
 
 
 @respx.mock
@@ -175,7 +176,7 @@ def test_chat_502_when_backend_unreachable(client: TestClient, backend_url: str)
     assert "Backend connection error" in detail["message"]
 
     metrics = client.get("/metrics").text
-    assert 'llm_errors_total{error_type="connect"}' in metrics
+    assert 'error_type="connect"' in metrics
 
 
 @respx.mock
@@ -191,4 +192,75 @@ def test_chat_502_on_timeout(client: TestClient, backend_url: str):
     assert detail["error_type"] == "timeout"
 
     metrics = client.get("/metrics").text
-    assert 'llm_errors_total{error_type="timeout"}' in metrics
+    assert 'error_type="timeout"' in metrics
+
+
+def _ollama_stream_body() -> str:
+    return "".join(
+        [
+            json.dumps({"response": "Ho", "done": False}) + "\n",
+            json.dumps({"response": "la", "done": False}) + "\n",
+            json.dumps(
+                {
+                    "response": "",
+                    "done": True,
+                    "prompt_eval_count": 8,
+                    "eval_count": 2,
+                    "prompt_eval_duration": 50_000_000,
+                    "eval_duration": 100_000_000,
+                    "total_duration": 180_000_000,
+                }
+            )
+            + "\n",
+        ]
+    )
+
+
+@respx.mock
+def test_chat_stream_ndjson_and_ttft_tpot_metrics(
+    client: TestClient, backend_url: str
+):
+    respx.post(f"{backend_url}/api/generate").mock(
+        return_value=httpx.Response(
+            200,
+            content=_ollama_stream_body(),
+            headers={"content-type": "application/x-ndjson"},
+        )
+    )
+
+    with client.stream("POST", "/chat/stream", json={"prompt": "hola"}) as response:
+        assert response.status_code == 200
+        assert "application/x-ndjson" in response.headers["content-type"]
+        lines = [line for line in response.iter_lines() if line]
+
+    assert len(lines) == 3
+    assert json.loads(lines[0])["response"] == "Ho"
+    assert json.loads(lines[1])["response"] == "la"
+    assert json.loads(lines[2])["done"] is True
+
+    sent = respx.calls.last.request
+    assert b'"stream":true' in sent.content or b'"stream": true' in sent.content
+
+    metrics = client.get("/metrics").text
+    assert "llm_ttft_seconds" in metrics
+    assert "llm_tpot_seconds" in metrics
+    assert 'mode="stream"' in metrics
+
+
+@respx.mock
+def test_chat_stream_connect_error_line(client: TestClient, backend_url: str):
+    respx.post(f"{backend_url}/api/generate").mock(
+        side_effect=httpx.ConnectError("connection refused")
+    )
+
+    with client.stream("POST", "/chat/stream", json={"prompt": "hola"}) as response:
+        assert response.status_code == 200
+        lines = [line for line in response.iter_lines() if line]
+
+    payload = json.loads(lines[-1])
+    assert payload["error"] is True
+    assert payload["error_type"] == "connect"
+
+    metrics = client.get("/metrics").text
+    assert 'error_type="connect"' in metrics
+    assert 'mode="stream"' in metrics
