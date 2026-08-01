@@ -10,11 +10,12 @@ This is a **foundation for LLMOps experimentation**, not a full production LLM p
 Client (curl / other services)
         ↓
 Internal LLM Gateway (FastAPI :8080)
-  /health  → liveness (process only)
-  /ready   → readiness (backend reachable)
-  /models  → proxy to Ollama tags
-  /chat    → proxy to Ollama generate
-  /metrics → Prometheus metrics
+  /health       → liveness (process only)
+  /ready        → readiness (backend reachable)
+  /models       → proxy to Ollama tags
+  /chat         → non-streaming generate (JSON)
+  /chat/stream  → streaming generate (NDJSON)
+  /metrics      → Prometheus metrics
         ↓
 Ollama on a lab host (Windows) :11434
         ↓
@@ -28,7 +29,8 @@ Local models (e.g. mistral:7b)
 | FastAPI gateway | Done |
 | Split `/health` vs `/ready` | Done |
 | Config via env (`pydantic-settings`) | Done |
-| Prometheus `/metrics` + ServiceMonitor manifest | Done (metrics basic) |
+| Non-stream `/chat` + stream `/chat/stream` (NDJSON) | Done |
+| Prometheus metrics (E2E, tokens, errors, TTFT/TPOT) | Done |
 | Unit tests with mocked backend (`pytest` + `respx`) | Done |
 | GitHub Actions CI on gateway changes | Done |
 | K8s Deployment probes + ConfigMap | Done |
@@ -39,9 +41,9 @@ Local models (e.g. mistral:7b)
 - vLLM / multi-backend routing
 - Auth, rate limiting, TLS
 - Autoscaling / HA beyond a single replica demo
-- Real TTFT/TPOT / token-level metrics
 - Evaluation / human-feedback loop
 - MLflow / MinIO benchmark artifact store
+- Published benchmark tables with controlled GPU runs
 
 ## Repository layout
 
@@ -75,9 +77,18 @@ Smoke checks:
 curl -s http://127.0.0.1:8080/health
 curl -s -i http://127.0.0.1:8080/ready
 curl -s http://127.0.0.1:8080/models
+
+# Non-stream (single JSON response)
 curl -s http://127.0.0.1:8080/chat \
   -H 'content-type: application/json' \
   -d '{"prompt":"hola en una frase"}'
+
+# Stream (NDJSON lines; -N disables curl buffering)
+curl -N http://127.0.0.1:8080/chat/stream \
+  -H 'content-type: application/json' \
+  -d '{"prompt":"hola en una frase"}'
+
+curl -s http://127.0.0.1:8080/metrics | rg 'llm_'
 ```
 
 Expected:
@@ -85,6 +96,39 @@ Expected:
 - `/health` → `200` if the process is up
 - `/ready` → `200` if Ollama answers; `503` if not
 - Stopping Ollama should flip `/ready` to `503` without killing `/health`
+- `/chat/stream` prints one JSON object per line until `"done": true`
+
+## Metrics (Prometheus `/metrics`)
+
+All series are exposed by the gateway. Labels commonly include `model` and, where relevant, `mode=non_stream|stream`.
+
+| Metric | What it measures | When it is recorded |
+|---|---|---|
+| `llm_requests_total` | Chat requests received | `/chat` and `/chat/stream` |
+| `llm_errors_total{error_type=...}` | Classified failures: `connect`, `timeout`, `backend_http` | Failed chat attempts |
+| `llm_request_duration_seconds` | **End-to-end** latency of non-stream `/chat` | `/chat` only |
+| `llm_prompt_tokens_total` / `llm_completion_tokens_total` | Tokens reported by Ollama | When Ollama returns counts |
+| `llm_backend_prompt_eval_seconds` | Ollama `prompt_eval_duration` | When present in Ollama payload |
+| `llm_backend_eval_seconds` | Ollama `eval_duration` | When present |
+| `llm_backend_total_seconds` | Ollama `total_duration` | When present |
+| `llm_ttft_seconds` | **Time to first token** (first non-empty `response` chunk) | `/chat/stream` only |
+| `llm_tpot_seconds` | Avg time per output token after the first (`(t_last-t_first)/(n-1)`, `n>=2`) | `/chat/stream` only |
+
+### Honest naming notes
+
+- **E2E ≠ TTFT.** `llm_request_duration_seconds` is full request time for non-stream `/chat`. It is **not** time-to-first-token.
+- **TTFT/TPOT require streaming.** They are only measured on `/chat/stream`.
+- **Backend `*_seconds` histograms** come from Ollama’s own nanosecond timers (converted), not from gateway wall-clock TTFT.
+- Lab CPU runs often show high TTFT (seconds) and modest TPOT; that is expected without a dedicated GPU.
+
+### Example lab observation (CPU, `mistral:7b`)
+
+One local streaming request produced roughly:
+
+- TTFT ≈ 9.6s (`llm_ttft_seconds_sum`)
+- TPOT ≈ 0.14s/token (`llm_tpot_seconds_sum`)
+
+Numbers vary with host load, model size, and whether the model is already warm in Ollama.
 
 ## Tests & CI
 
@@ -103,27 +147,28 @@ See [`k8s/README.md`](k8s/README.md) for apply order.
 
 Important lab caveats:
 
-1. `k8s/ollama-backend/endpoints.yaml` points at a **host IP** (VMware/Windows). Update it when the IP changes. This is not a production service-discovery pattern.
-2. `Deployment` image `rcabe005/llm-gateway:0.1.1` must include `/ready`. Rebuild/push from current `main` if probes return 404.
-3. Optional `ServiceMonitor` only works if Prometheus Operator is installed.
+1. `k8s/ollama-backend/endpoints.yaml` points at a **host IP** (VMware/Windows). Update it when the IP changes (DHCP). This is not a production service-discovery pattern.
+2. For local (non-K8s) runs, always set `OLLAMA_BASE_URL` to the current Windows host IP; the default `http://ollama:11434` only resolves inside the cluster.
+3. `Deployment` image `rcabe005/llm-gateway:0.1.1` may lag `main` (streaming/metrics). Rebuild/push before relying on new endpoints in-cluster.
+4. Optional `ServiceMonitor` only works if Prometheus Operator is installed.
 
 ## Configuration
 
 | Env var | Default | Purpose |
 |---|---|---|
 | `OLLAMA_BASE_URL` | `http://ollama:11434` | Backend base URL |
-| `DEFAULT_MODEL` | `mistral:7b` | Model when `/chat` omits `model` |
+| `DEFAULT_MODEL` | `mistral:7b` | Model when request omits `model` |
 | `READY_CHECK_TIMEOUT_SECONDS` | `2` | Readiness probe budget |
 | `MODELS_TIMEOUT_SECONDS` | `10` | `/models` timeout |
-| `CHAT_TIMEOUT_SECONDS` | `120` | `/chat` timeout |
+| `CHAT_TIMEOUT_SECONDS` | `120` | `/chat` and `/chat/stream` timeout |
 
 In cluster, these are provided by `k8s/gateway/configmap.yaml`.
 
 ## Roadmap (next milestones)
 
-1. Richer LLM metrics (TTFT/TPOT, tokens, error classes)
+1. ~~Richer LLM metrics (TTFT/TPOT, tokens, error classes)~~ **Done**
 2. Backend abstraction + path to vLLM
-3. Published benchmarks with real numbers in this README
+3. Published benchmarks with controlled runs (optional GPU cloud)
 4. Evaluation / feedback harness attached to the gateway
 
 ## License
