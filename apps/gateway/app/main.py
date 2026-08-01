@@ -1,4 +1,3 @@
-import os
 import time
 from typing import Optional
 
@@ -8,11 +7,10 @@ from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, Field
 from prometheus_client import Counter, Histogram, generate_latest
 
+from app.config import get_settings
 
-OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://ollama:11434")
-DEFAULT_MODEL = os.getenv("DEFAULT_MODEL", "mistral:7b")
-# Keep readiness checks cheap so probes do not overload the backend.
-READY_CHECK_TIMEOUT_SECONDS = float(os.getenv("READY_CHECK_TIMEOUT_SECONDS", "2"))
+
+settings = get_settings()
 
 REQUEST_COUNT = Counter(
     "llm_requests_total",
@@ -34,7 +32,7 @@ REQUEST_LATENCY = Histogram(
 app = FastAPI(
     title="Internal LLM Gateway",
     description="A Kubernetes-native internal gateway for LLM backends.",
-    version="0.2.0",
+    version="0.2.1",
 )
 
 
@@ -62,9 +60,11 @@ class ReadyResponse(BaseModel):
 
 async def backend_is_reachable() -> tuple[bool, str]:
     """Return (ok, detail) for a lightweight backend readiness check."""
-    url = f"{OLLAMA_BASE_URL}/api/tags"
+    url = f"{settings.ollama_base_url}/api/tags"
     try:
-        async with httpx.AsyncClient(timeout=READY_CHECK_TIMEOUT_SECONDS) as client:
+        async with httpx.AsyncClient(
+            timeout=settings.ready_check_timeout_seconds
+        ) as client:
             response = await client.get(url)
             if response.status_code < 400:
                 return True, "backend reachable"
@@ -89,23 +89,23 @@ async def ready():
             content={
                 "status": "not_ready",
                 "backend": "ollama",
-                "backend_url": OLLAMA_BASE_URL,
+                "backend_url": settings.ollama_base_url,
                 "detail": detail,
             },
         )
     return ReadyResponse(
         status="ready",
         backend="ollama",
-        backend_url=OLLAMA_BASE_URL,
+        backend_url=settings.ollama_base_url,
     )
 
 
 @app.get("/models")
 async def models():
-    url = f"{OLLAMA_BASE_URL}/api/tags"
+    url = f"{settings.ollama_base_url}/api/tags"
 
     try:
-        async with httpx.AsyncClient(timeout=10) as client:
+        async with httpx.AsyncClient(timeout=settings.models_timeout_seconds) as client:
             response = await client.get(url)
             response.raise_for_status()
             return response.json()
@@ -115,8 +115,8 @@ async def models():
 
 @app.post("/chat", response_model=ChatResponse)
 async def chat(request: ChatRequest):
-    model = request.model or DEFAULT_MODEL
-    url = f"{OLLAMA_BASE_URL}/api/generate"
+    model = request.model or settings.default_model
+    url = f"{settings.ollama_base_url}/api/generate"
 
     REQUEST_COUNT.labels(model=model).inc()
 
@@ -130,7 +130,7 @@ async def chat(request: ChatRequest):
 
     try:
         with REQUEST_LATENCY.time():
-            async with httpx.AsyncClient(timeout=120) as client:
+            async with httpx.AsyncClient(timeout=settings.chat_timeout_seconds) as client:
                 response = await client.post(url, json=payload)
 
                 if response.status_code >= 400:
