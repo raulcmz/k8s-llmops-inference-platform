@@ -38,6 +38,10 @@ Internal LLM Gateway (FastAPI :8080)
 | Prometheus metrics (E2E, tokens, errors, TTFT/TPOT) | Done |
 | Unit tests with mocked backends (`pytest` + `respx`) | Done |
 | GitHub Actions CI on gateway changes | Done |
+| Quality eval harness (`evals/`) | Done |
+| Human feedback (rubric + pairwise) | Done |
+| Baseline vs candidate promotion gate | Done |
+| GitHub Actions CI on evals unit tests | Done |
 | K8s Deployment probes + ConfigMap | Done |
 | Ollama via manual Service/Endpoints (lab) | Done |
 
@@ -46,7 +50,6 @@ Internal LLM Gateway (FastAPI :8080)
 - Live vLLM Deployment manifests / GPU runbooks (adapter is ready; GPU optional)
 - Auth, rate limiting, TLS
 - Autoscaling / HA beyond a single replica demo
-- Evaluation / human-feedback loop
 - MLflow / MinIO benchmark artifact store
 - Published benchmark tables with controlled GPU runs
 
@@ -55,10 +58,10 @@ Internal LLM Gateway (FastAPI :8080)
 ```text
 apps/gateway/app/backends/   # LLMBackend protocol + Ollama/vLLM adapters
 apps/gateway/               # FastAPI app, Dockerfile, tests, requirements
-evals/                      # Offline quality eval harness (cases → /chat → report)
+evals/                      # Quality evals: cases, checks, human feedback, promote gate
 k8s/gateway/                # Deployment, Service, ConfigMap, ServiceMonitor
 k8s/ollama-backend/         # Lab Service + Endpoints → Windows host IP
-.github/workflows/          # CI (pytest)
+.github/workflows/          # CI (gateway + evals unit tests)
 ```
 
 ## Inference backends (Ollama vs vLLM)
@@ -182,14 +185,47 @@ All series are exposed by the gateway. Labels commonly include `model` and, wher
 
 ## Tests & CI
 
+Gateway (mocked backends — no GPU required):
+
 ```bash
 cd apps/gateway
 pip install -r requirements-dev.txt
 python -m pytest -v
 ```
 
-Tests mock Ollama and vLLM with `respx` — no GPU and no live backend required.  
-CI runs on changes under `apps/gateway/**`.
+Quality evals (harness / feedback / gate — no live model required):
+
+```bash
+cd evals
+# prefer: uv venv .venv-evals && source .venv-evals/bin/activate
+pip install -r requirements.txt pytest
+PYTHONPATH=.. pytest -v
+```
+
+CI: gateway job on `apps/gateway/**`; evals job on `evals/**`.
+
+## Quality evals (offline demo)
+
+Serving metrics (TTFT/TPOT) live under `/metrics`. **Quality** evals live under [`evals/`](evals/): versioned cases → automatic checks → optional human rubric/pairwise → baseline vs candidate **promotion gate**.
+
+Clone-and-run (no Ollama):
+
+```bash
+cd evals
+uv venv .venv-evals && source .venv-evals/bin/activate
+uv pip install -r requirements.txt pytest
+PYTHONPATH=.. pytest -v
+
+python promote_gate.py \
+  --baseline gates/fixtures/baseline_smoke.json \
+  --candidate gates/fixtures/candidate_smoke_promote.json   # exit 0
+
+python promote_gate.py \
+  --baseline gates/fixtures/baseline_smoke.json \
+  --candidate gates/fixtures/candidate_smoke_block.json     # exit 1
+```
+
+Generated reports under `evals/reports/` are gitignored (regenerable lab artifacts). See [`evals/README.md`](evals/README.md) for the full lab demo loop (live gateway optional).
 
 ## Kubernetes (lab)
 
@@ -218,8 +254,8 @@ Important lab caveats:
 
 1. ~~Richer LLM metrics (TTFT/TPOT, tokens, error classes)~~ **Done**
 2. ~~Backend abstraction + path to vLLM~~ **Done**
-3. Published benchmarks with controlled runs (optional GPU cloud)
-4. Evaluation / feedback harness attached to the gateway — **in progress** (`evals/`)
+3. ~~Evaluation / human-feedback / promotion gate~~ **Done** ([`evals/`](evals/))
+4. Published benchmarks with controlled runs (optional GPU cloud)
 
 ## License
 

@@ -1,0 +1,40 @@
+name: evals-ci
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "evals/**"
+      - ".github/workflows/evals-ci.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "evals/**"
+      - ".github/workflows/evals-ci.yml"
+
+jobs:
+  test:
+    name: evals-unit-tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: evals/requirements.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r evals/requirements.txt pytest
+
+      - name: Run evals unit tests
+        working-directory: evals
+        env:
+          PYTHONPATH: ..
+        run: python -m pytest -v
