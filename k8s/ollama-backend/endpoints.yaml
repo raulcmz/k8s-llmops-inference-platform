@@ -1,7 +1,7 @@
 # LAB ONLY — manual Endpoints pointing at Ollama on the Windows host.
 # This is NOT a production pattern (no HA, IP changes break the Service).
-# Update the IP whenever your Windows host address changes.
-# Current lab IP used by Raúl's VMware network (Aug 2026): 192.168.1.136
+# Update the IP whenever your Windows host address changes (DHCP).
+# Current lab IP (VMware network): 192.168.1.131
 apiVersion: v1
 kind: Endpoints
 metadata:
@@ -9,6 +9,6 @@ metadata:
   namespace: default
 subsets:
   - addresses:
-      - ip: 192.168.1.136
+      - ip: 192.168.1.131
     ports:
       - port: 11434

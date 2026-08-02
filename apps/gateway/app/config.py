@@ -12,6 +12,8 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
+    # Which LLMBackend adapter to load (ollama today; vllm in H3-T2).
+    backend_type: str = "ollama"
     ollama_base_url: str = "http://ollama:11434"
     default_model: str = "mistral:7b"
     ready_check_timeout_seconds: float = 2.0

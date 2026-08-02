@@ -2,16 +2,17 @@ import json
 import time
 from typing import Any, AsyncIterator, Optional
 
-import httpx
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 from pydantic import BaseModel, Field
 from prometheus_client import Counter, Histogram, generate_latest
 
+from app.backends import BackendError, get_backend
 from app.config import get_settings
 
 
 settings = get_settings()
+backend = get_backend()
 
 REQUEST_COUNT = Counter(
     "llm_requests_total",
@@ -85,7 +86,7 @@ TPOT = Histogram(
 app = FastAPI(
     title="Internal LLM Gateway",
     description="A Kubernetes-native internal gateway for LLM backends.",
-    version="0.4.0",
+    version="0.5.0",
 )
 
 
@@ -99,10 +100,10 @@ class ChatResponse(BaseModel):
     response: str
     # Gateway-measured end-to-end latency (not TTFT).
     latency_ms: float
-    backend: str = "ollama"
+    backend: str
     prompt_tokens: Optional[int] = None
     completion_tokens: Optional[int] = None
-    # Durations reported by Ollama (converted from nanoseconds).
+    # Durations reported by the engine (Ollama nanoseconds converted to ms).
     backend_total_ms: Optional[float] = None
     backend_prompt_eval_ms: Optional[float] = None
     backend_eval_ms: Optional[float] = None
@@ -139,7 +140,7 @@ def _ns_to_seconds(value_ns: Any) -> Optional[float]:
 def _record_backend_stats(
     model: str, data: dict[str, Any], mode: str
 ) -> dict[str, Any]:
-    """Extract Ollama stats and update Prometheus counters/histograms."""
+    """Extract engine stats and update Prometheus counters/histograms."""
     prompt_tokens = data.get("prompt_eval_count")
     completion_tokens = data.get("eval_count")
 
@@ -170,19 +171,16 @@ def _record_backend_stats(
     }
 
 
-async def backend_is_reachable() -> tuple[bool, str]:
-    """Return (ok, detail) for a lightweight backend readiness check."""
-    url = f"{settings.ollama_base_url}/api/tags"
-    try:
-        async with httpx.AsyncClient(
-            timeout=settings.ready_check_timeout_seconds
-        ) as client:
-            response = await client.get(url)
-            if response.status_code < 400:
-                return True, "backend reachable"
-            return False, f"backend status {response.status_code}"
-    except httpx.HTTPError as exc:
-        return False, f"backend unreachable: {exc}"
+def _http_error_from_backend(exc: BackendError) -> HTTPException:
+    detail: dict[str, Any] = {
+        "message": exc.message,
+        "error_type": exc.error_type,
+    }
+    if exc.backend_status is not None:
+        detail["backend_status"] = exc.backend_status
+    if exc.backend_body is not None:
+        detail["backend_body"] = exc.backend_body
+    return HTTPException(status_code=502, detail=detail)
 
 
 @app.get("/health", response_model=HealthResponse)
@@ -194,89 +192,47 @@ def health():
 @app.get("/ready", response_model=ReadyResponse)
 async def ready():
     """Readiness: gateway can accept traffic only if the backend responds."""
-    ok, detail = await backend_is_reachable()
+    ok, detail = await backend.check_ready()
     if not ok:
         return JSONResponse(
             status_code=503,
             content={
                 "status": "not_ready",
-                "backend": "ollama",
-                "backend_url": settings.ollama_base_url,
+                "backend": backend.name,
+                "backend_url": backend.base_url,
                 "detail": detail,
             },
         )
     return ReadyResponse(
         status="ready",
-        backend="ollama",
-        backend_url=settings.ollama_base_url,
+        backend=backend.name,
+        backend_url=backend.base_url,
     )
 
 
 @app.get("/models")
 async def models():
-    url = f"{settings.ollama_base_url}/api/tags"
-
     try:
-        async with httpx.AsyncClient(timeout=settings.models_timeout_seconds) as client:
-            response = await client.get(url)
-            response.raise_for_status()
-            return response.json()
-    except httpx.HTTPError as exc:
-        raise HTTPException(status_code=502, detail=f"Backend error: {exc}")
+        return await backend.list_models()
+    except BackendError as exc:
+        raise _http_error_from_backend(exc) from exc
 
 
 @app.post("/chat", response_model=ChatResponse)
 async def chat(request: ChatRequest):
     model = request.model or settings.default_model
-    url = f"{settings.ollama_base_url}/api/generate"
     mode = "non_stream"
 
     REQUEST_COUNT.labels(model=model, mode=mode).inc()
-
-    payload = {
-        "model": model,
-        "prompt": request.prompt,
-        "stream": False,
-    }
 
     start = time.perf_counter()
     data: dict[str, Any] = {}
 
     try:
-        async with httpx.AsyncClient(timeout=settings.chat_timeout_seconds) as client:
-            response = await client.post(url, json=payload)
-
-            if response.status_code >= 400:
-                ERROR_COUNT.labels(error_type="backend_http", mode=mode).inc()
-                raise HTTPException(
-                    status_code=502,
-                    detail={
-                        "backend_status": response.status_code,
-                        "backend_body": response.text,
-                        "error_type": "backend_http",
-                    },
-                )
-
-            data = response.json()
-
-    except httpx.TimeoutException as exc:
-        ERROR_COUNT.labels(error_type="timeout", mode=mode).inc()
-        raise HTTPException(
-            status_code=502,
-            detail={
-                "message": f"Backend timeout: {exc}",
-                "error_type": "timeout",
-            },
-        ) from exc
-    except httpx.RequestError as exc:
-        ERROR_COUNT.labels(error_type="connect", mode=mode).inc()
-        raise HTTPException(
-            status_code=502,
-            detail={
-                "message": f"Backend connection error: {exc}",
-                "error_type": "connect",
-            },
-        ) from exc
+        data = await backend.generate(model=model, prompt=request.prompt)
+    except BackendError as exc:
+        ERROR_COUNT.labels(error_type=exc.error_type, mode=mode).inc()
+        raise _http_error_from_backend(exc) from exc
     finally:
         REQUEST_LATENCY.labels(model=model).observe(time.perf_counter() - start)
 
@@ -287,6 +243,7 @@ async def chat(request: ChatRequest):
         model=model,
         response=data.get("response", ""),
         latency_ms=latency_ms,
+        backend=backend.name,
         prompt_tokens=stats["prompt_tokens"],
         completion_tokens=stats["completion_tokens"],
         backend_total_ms=stats["backend_total_ms"],
@@ -298,23 +255,16 @@ async def chat(request: ChatRequest):
 @app.post("/chat/stream")
 async def chat_stream(request: ChatRequest):
     """
-    Stream chat completions from Ollama as NDJSON.
+    Stream chat completions as NDJSON via the configured LLMBackend.
 
-    Each line is one JSON object from Ollama. The gateway measures:
+    The gateway measures:
     - TTFT: time until the first chunk with a non-empty "response"
     - TPOT: (t_last - t_first) / (completion_tokens - 1) when tokens >= 2
     """
     model = request.model or settings.default_model
-    url = f"{settings.ollama_base_url}/api/generate"
     mode = "stream"
 
     REQUEST_COUNT.labels(model=model, mode=mode).inc()
-
-    payload = {
-        "model": model,
-        "prompt": request.prompt,
-        "stream": True,
-    }
 
     async def event_generator() -> AsyncIterator[str]:
         start = time.perf_counter()
@@ -323,65 +273,38 @@ async def chat_stream(request: ChatRequest):
         final_stats: dict[str, Any] = {}
 
         try:
-            async with httpx.AsyncClient(timeout=settings.chat_timeout_seconds) as client:
-                async with client.stream("POST", url, json=payload) as response:
-                    if response.status_code >= 400:
-                        ERROR_COUNT.labels(error_type="backend_http", mode=mode).inc()
-                        body = await response.aread()
-                        error_line = json.dumps(
-                            {
-                                "error": True,
-                                "error_type": "backend_http",
-                                "backend_status": response.status_code,
-                                "backend_body": body.decode("utf-8", errors="replace"),
-                            }
-                        )
-                        yield error_line + "\n"
-                        return
+            async for data in backend.stream_generate(
+                model=model, prompt=request.prompt
+            ):
+                if "_raw_line" in data:
+                    yield data["_raw_line"] + "\n"
+                    continue
 
-                    async for line in response.aiter_lines():
-                        if not line:
-                            continue
+                chunk = data.get("response") or ""
+                now = time.perf_counter()
+                if chunk:
+                    if first_token_at is None:
+                        first_token_at = now
+                        TTFT.labels(model=model).observe(now - start)
+                    last_token_at = now
 
-                        try:
-                            data = json.loads(line)
-                        except json.JSONDecodeError:
-                            # Forward opaque lines unchanged; do not break the stream.
-                            yield line + "\n"
-                            continue
+                if data.get("done"):
+                    final_stats = data
 
-                        chunk = data.get("response") or ""
-                        now = time.perf_counter()
-                        if chunk:
-                            if first_token_at is None:
-                                first_token_at = now
-                                TTFT.labels(model=model).observe(now - start)
-                            last_token_at = now
+                yield json.dumps(data) + "\n"
 
-                        if data.get("done"):
-                            final_stats = data
-
-                        yield line + "\n"
-
-        except httpx.TimeoutException as exc:
-            ERROR_COUNT.labels(error_type="timeout", mode=mode).inc()
-            yield json.dumps(
-                {
-                    "error": True,
-                    "error_type": "timeout",
-                    "message": f"Backend timeout: {exc}",
-                }
-            ) + "\n"
-            return
-        except httpx.RequestError as exc:
-            ERROR_COUNT.labels(error_type="connect", mode=mode).inc()
-            yield json.dumps(
-                {
-                    "error": True,
-                    "error_type": "connect",
-                    "message": f"Backend connection error: {exc}",
-                }
-            ) + "\n"
+        except BackendError as exc:
+            ERROR_COUNT.labels(error_type=exc.error_type, mode=mode).inc()
+            payload: dict[str, Any] = {
+                "error": True,
+                "error_type": exc.error_type,
+                "message": exc.message,
+            }
+            if exc.backend_status is not None:
+                payload["backend_status"] = exc.backend_status
+            if exc.backend_body is not None:
+                payload["backend_body"] = exc.backend_body
+            yield json.dumps(payload) + "\n"
             return
 
         if final_stats:

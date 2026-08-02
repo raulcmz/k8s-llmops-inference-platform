@@ -3,7 +3,8 @@
 ## Apply order
 
 ```bash
-# 1) Point the cluster at Ollama on the Windows host (edit IP first)
+# 1) Point the cluster at Ollama on the Windows host
+#    (edit endpoints.yaml IP first — currently 192.168.1.131)
 kubectl apply -f k8s/ollama-backend/service.yaml
 kubectl apply -f k8s/ollama-backend/endpoints.yaml
 

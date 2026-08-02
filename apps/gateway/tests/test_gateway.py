@@ -4,6 +4,15 @@ import httpx
 import respx
 from fastapi.testclient import TestClient
 
+from app.backends import get_backend
+
+
+def test_backend_factory_defaults_to_ollama():
+    """Gateway must load the Ollama adapter by default (BACKEND_TYPE)."""
+    b = get_backend()
+    assert b.name == "ollama"
+    assert b.base_url.endswith(":11434") or "ollama" in b.base_url
+
 
 def test_health_is_process_only(client: TestClient):
     """Liveness must succeed even if the LLM backend is down."""
@@ -65,7 +74,9 @@ def test_models_502_on_backend_error(client: TestClient, backend_url: str):
     response = client.get("/models")
 
     assert response.status_code == 502
-    assert "Backend error" in response.json()["detail"]
+    detail = response.json()["detail"]
+    assert detail["error_type"] == "connect"
+    assert "Backend connection error" in detail["message"]
 
 
 @respx.mock
