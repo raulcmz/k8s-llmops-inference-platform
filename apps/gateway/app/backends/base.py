@@ -3,6 +3,10 @@
 The gateway (HTTP, probes, Prometheus) depends on this Protocol — not on
 Ollama/vLLM specifics. That is the Adapter pattern: swap engines without
 rewriting /chat handlers.
+
+Adapters may speak different wire protocols (Ollama NDJSON vs vLLM SSE) but
+should expose generate/stream results in the gateway's internal event shape
+(`response`, `done`, token fields) so metrics stay centralized.
 """
 
 from __future__ import annotations

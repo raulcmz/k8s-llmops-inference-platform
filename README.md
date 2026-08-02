@@ -38,7 +38,7 @@ Local models (e.g. mistral:7b)
 
 ### Explicitly not included yet
 
-- vLLM / multi-backend routing
+- Live vLLM deployment manifests / GPU runbooks (adapter code is ready; cluster/GPU optional)
 - Auth, rate limiting, TLS
 - Autoscaling / HA beyond a single replica demo
 - Evaluation / human-feedback loop
@@ -156,8 +156,9 @@ Important lab caveats:
 
 | Env var | Default | Purpose |
 |---|---|---|
-| `BACKEND_TYPE` | `ollama` | LLM adapter to load (`ollama` today; `vllm` next) |
-| `OLLAMA_BASE_URL` | `http://ollama:11434` | Ollama base URL |
+| `BACKEND_TYPE` | `ollama` | LLM adapter: `ollama` or `vllm` |
+| `OLLAMA_BASE_URL` | `http://ollama:11434` | Used when `BACKEND_TYPE=ollama` |
+| `VLLM_BASE_URL` | `http://vllm:8000` | Used when `BACKEND_TYPE=vllm` (OpenAI-compatible) |
 | `DEFAULT_MODEL` | `mistral:7b` | Model when request omits `model` |
 | `READY_CHECK_TIMEOUT_SECONDS` | `2` | Readiness probe budget |
 | `MODELS_TIMEOUT_SECONDS` | `10` | `/models` timeout |
