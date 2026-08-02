@@ -55,6 +55,7 @@ Internal LLM Gateway (FastAPI :8080)
 ```text
 apps/gateway/app/backends/   # LLMBackend protocol + Ollama/vLLM adapters
 apps/gateway/               # FastAPI app, Dockerfile, tests, requirements
+evals/                      # Offline quality eval harness (cases → /chat → report)
 k8s/gateway/                # Deployment, Service, ConfigMap, ServiceMonitor
 k8s/ollama-backend/         # Lab Service + Endpoints → Windows host IP
 .github/workflows/          # CI (pytest)
@@ -218,7 +219,7 @@ Important lab caveats:
 1. ~~Richer LLM metrics (TTFT/TPOT, tokens, error classes)~~ **Done**
 2. ~~Backend abstraction + path to vLLM~~ **Done**
 3. Published benchmarks with controlled runs (optional GPU cloud)
-4. Evaluation / feedback harness attached to the gateway
+4. Evaluation / feedback harness attached to the gateway — **in progress** (`evals/`)
 
 ## License
 
