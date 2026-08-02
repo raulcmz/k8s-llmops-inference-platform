@@ -12,7 +12,6 @@ from app.config import get_settings
 
 
 settings = get_settings()
-backend = get_backend()
 
 REQUEST_COUNT = Counter(
     "llm_requests_total",
@@ -86,7 +85,7 @@ TPOT = Histogram(
 app = FastAPI(
     title="Internal LLM Gateway",
     description="A Kubernetes-native internal gateway for LLM backends.",
-    version="0.5.0",
+    version="0.6.0",
 )
 
 
@@ -192,6 +191,7 @@ def health():
 @app.get("/ready", response_model=ReadyResponse)
 async def ready():
     """Readiness: gateway can accept traffic only if the backend responds."""
+    backend = get_backend()
     ok, detail = await backend.check_ready()
     if not ok:
         return JSONResponse(
@@ -213,13 +213,14 @@ async def ready():
 @app.get("/models")
 async def models():
     try:
-        return await backend.list_models()
+        return await get_backend().list_models()
     except BackendError as exc:
         raise _http_error_from_backend(exc) from exc
 
 
 @app.post("/chat", response_model=ChatResponse)
 async def chat(request: ChatRequest):
+    backend = get_backend()
     model = request.model or settings.default_model
     mode = "non_stream"
 
@@ -261,6 +262,7 @@ async def chat_stream(request: ChatRequest):
     - TTFT: time until the first chunk with a non-empty "response"
     - TPOT: (t_last - t_first) / (completion_tokens - 1) when tokens >= 2
     """
+    backend = get_backend()
     model = request.model or settings.default_model
     mode = "stream"
 
