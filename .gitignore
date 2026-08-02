@@ -210,3 +210,9 @@ __marimo__/
 # Eval harness reports
 evals/reports/*
 !evals/reports/.gitkeep
+
+# Human feedback annotations (keep examples + directory placeholders)
+evals/feedback/rubric/*
+!evals/feedback/rubric/.gitkeep
+evals/feedback/pairwise/*
+!evals/feedback/pairwise/.gitkeep
