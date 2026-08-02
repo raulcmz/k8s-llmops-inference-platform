@@ -139,6 +139,7 @@ celerybeat.pid
 .envrc
 .venv
 .venv-evals
+.venv-bench
 env/
 venv/
 ENV/
@@ -213,6 +214,10 @@ evals/reports/*
 !evals/reports/gates/
 evals/reports/gates/*
 !evals/reports/gates/.gitkeep
+
+# Serving benchmark reports
+benchmarks/reports/*
+!benchmarks/reports/.gitkeep
 
 # Human feedback annotations (keep examples + directory placeholders)
 evals/feedback/rubric/*
