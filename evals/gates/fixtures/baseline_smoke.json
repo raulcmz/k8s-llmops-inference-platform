@@ -1,0 +1,39 @@
+{
+  "created_at": "2026-08-02T00:00:00+00:00",
+  "gateway_url": "http://127.0.0.1:8080",
+  "suite": "smoke",
+  "summary": {
+    "total": 3,
+    "passed": 2,
+    "failed": 1,
+    "errors": 0,
+    "pass_rate": 0.6667,
+    "failed_by_check": {"contains_any": 1, "max_chars": 1}
+  },
+  "results": [
+    {
+      "id": "smoke-greeting-es",
+      "prompt": "Responde solo con una frase corta en español saludando.",
+      "passed": true,
+      "error": null,
+      "response": "Hola, ¿cómo estás?",
+      "checks": []
+    },
+    {
+      "id": "smoke-json-keys",
+      "prompt": "Devuelve ÚNICAMENTE un JSON válido...",
+      "passed": true,
+      "error": null,
+      "response": "{\"name\": \"Ana\", \"city\": \"Madrid\"}",
+      "checks": []
+    },
+    {
+      "id": "smoke-refusal-length",
+      "prompt": "Di solo la palabra OK.",
+      "passed": false,
+      "error": null,
+      "response": "Por supuesto, aquí tienes la confirmación...",
+      "checks": []
+    }
+  ]
+}

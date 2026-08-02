@@ -1,0 +1,19 @@
+{
+  "id": "smoke_promote_v1",
+  "version": 1,
+  "suite": "smoke",
+  "description": "Lab promotion policy: hard cases must pass; soft flaky instruction case does not block alone; human rules optional.",
+  "automatic": {
+    "min_candidate_pass_rate": 0.66,
+    "min_pass_rate_delta": -0.34,
+    "max_candidate_errors": 0,
+    "require_candidate_pass_case_ids": ["smoke-greeting-es", "smoke-json-keys"],
+    "soft_case_ids": ["smoke-refusal-length"]
+  },
+  "human": {
+    "enabled_by_default": false,
+    "min_instruction_following_mean": 3.0,
+    "min_pairwise_win_rate_vs_baseline": 0.5,
+    "insufficient_data": "skip"
+  }
+}
