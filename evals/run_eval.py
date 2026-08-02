@@ -20,7 +20,7 @@ if str(ROOT) not in sys.path:
 from evals.harness.cases import load_cases_jsonl
 from evals.harness.checks import all_passed, run_expectation_checks
 from evals.harness.gateway import GatewayError, call_chat
-from evals.harness.report import summarize, utc_now_iso, write_report
+from evals.harness.report import format_check_lines, summarize, utc_now_iso, write_report
 
 
 def parse_args() -> argparse.Namespace:
@@ -102,7 +102,15 @@ def main() -> int:
             row["passed"] = False
 
         status = "PASS" if row["passed"] else "FAIL"
-        print(f"[{status}] {case.id}")
+        latency = row["latency_ms"]
+        latency_s = f" latency_ms={latency}" if latency is not None else ""
+        print(f"[{status}] {case.id}{latency_s}")
+        if not row["passed"]:
+            if row["error"]:
+                print(f"    error: {row['error']}")
+            for line in format_check_lines(row["checks"]):
+                print(line)
+
         results.append(row)
 
     summary = summarize(results)
@@ -118,10 +126,17 @@ def main() -> int:
     report_path = Path(args.reports_dir) / f"{args.suite}_{stamp}.json"
     write_report(report_path, report)
 
+    failed_by = summary.get("failed_by_check") or {}
+    failed_by_s = (
+        " failed_by_check=" + ",".join(f"{k}:{v}" for k, v in failed_by.items())
+        if failed_by
+        else ""
+    )
     print(
         "summary "
         f"passed={summary['passed']}/{summary['total']} "
-        f"pass_rate={summary['pass_rate']} "
+        f"pass_rate={summary['pass_rate']}"
+        f"{failed_by_s} "
         f"report={report_path}"
     )
     return 0 if summary["failed"] == 0 else 1

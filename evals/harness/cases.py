@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Iterator, Optional
+from typing import Any, Iterator, Optional
 
 from pydantic import BaseModel, Field
 
@@ -20,6 +20,12 @@ class Expectation(BaseModel):
     contains_all: list[str] = Field(default_factory=list)
     min_chars: Optional[int] = None
     max_chars: Optional[int] = None
+
+    # Structural JSON checks (H5-T2). All optional; unset = not evaluated.
+    json_valid: Optional[bool] = None
+    json_object: Optional[bool] = None
+    json_required_keys: list[str] = Field(default_factory=list)
+    json_equals: Optional[dict[str, Any]] = None
 
 
 class EvalCase(BaseModel):
