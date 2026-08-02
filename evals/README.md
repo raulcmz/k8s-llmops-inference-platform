@@ -1,8 +1,94 @@
 # Gateway eval harness (Hito 5)
 
-Offline evaluation of the inference gateway: versioned cases → call `/chat` → automatic checks → JSON report → optional **human feedback** (rubrics / pairwise).
+Offline **quality** evaluation of the inference gateway:
 
-This is **quality** evaluation (did the answer satisfy expectations?), not serving benchmarks (TTFT/TPOT). Those live under the gateway `/metrics`.
+```text
+versioned cases → /chat → automatic checks → JSON report
+                 → optional human feedback (rubric / pairwise)
+                 → baseline vs candidate promotion gate
+```
+
+This is not serving benchmarks (TTFT/TPOT). Those live under the gateway `/metrics`.
+
+## Lab demo loop
+
+Two paths. Prefer **A** when cloning the repo; use **B** in the Ollama lab.
+
+### A — Offline (no gateway, no model)
+
+```bash
+cd evals
+uv venv .venv-evals
+source .venv-evals/bin/activate          # Windows: .venv-evals\Scripts\activate
+uv pip install -r requirements.txt
+uv pip install pytest
+
+PYTHONPATH=.. pytest -v
+
+# Promotion gate dry-run (committed fixtures)
+python promote_gate.py \
+  --policy gates/smoke_promote_v1.json \
+  --baseline gates/fixtures/baseline_smoke.json \
+  --candidate gates/fixtures/candidate_smoke_promote.json
+echo "promote_exit=$?"   # expect 0
+
+python promote_gate.py \
+  --policy gates/smoke_promote_v1.json \
+  --baseline gates/fixtures/baseline_smoke.json \
+  --candidate gates/fixtures/candidate_smoke_block.json
+echo "block_exit=$?"     # expect 1
+
+# Human-feedback summary from committed examples
+python annotate.py summarize
+```
+
+### B — Live lab (gateway + Ollama)
+
+Terminal A — gateway:
+
+```bash
+cd apps/gateway
+source .venv/bin/activate
+export OLLAMA_BASE_URL=http://192.168.1.131:11434   # your Windows host IP
+export DEFAULT_MODEL=mistral:7b
+uvicorn app.main:app --host 0.0.0.0 --port 8080
+```
+
+Terminal B — evals:
+
+```bash
+cd evals
+source .venv-evals/bin/activate
+export GATEWAY_URL=http://127.0.0.1:8080
+
+curl -sS "$GATEWAY_URL/health"; echo
+curl -sS "$GATEWAY_URL/ready"; echo
+
+python run_eval.py --suite smoke
+# CPU models may fail soft cases (e.g. smoke-refusal-length); that is useful signal.
+
+# Optional: score a failed/interesting case
+python annotate.py rubric \
+  --report reports/smoke_XXXX.json \
+  --case-id smoke-refusal-length \
+  --rater-id raul \
+  --scores '{"instruction_following":1,"clarity":4,"concision":2,"safety_basic":5}'
+
+# Optional: compare two saved runs
+python promote_gate.py \
+  --baseline reports/smoke_baseline.json \
+  --candidate reports/smoke_candidate.json
+```
+
+### Artifacts: what is (not) in git
+
+| In git | Not in git (local / CI artifacts) |
+|---|---|
+| Cases, rubrics, gate policy, fixtures | `reports/*.json` from live runs |
+| Feedback **examples** | `feedback/rubric/` and `feedback/pairwise/` annotations |
+| Harness code + unit tests | Gate decision JSON under `reports/gates/` |
+
+Reports are regenerable lab outputs (timestamps, model text, host URLs). Version the **policy and fixtures**, not every run.
 
 ## Layout
 
@@ -22,7 +108,7 @@ evals/
   .venv-evals/     # local uv venv for this package (gitignored; create yourself)
 ```
 
-The venv is named **`.venv-evals`** (not `.venv`) so it is easy to tell apart from `apps/gateway/.venv` when both are active in the lab.
+The venv is named **`.venv-evals`** (not `.venv`) so it is easy to tell apart from `apps/gateway/.venv`.
 
 ## Case format (JSONL)
 
@@ -58,48 +144,8 @@ Each line is one JSON object:
 
 JSON checks accept a fenced markdown code block (`json` language tag optional) when the model wraps the payload; the check detail records `fence` vs `raw`.
 
-Heuristic and structural checks are automatic. Human rubrics / pairwise preferences capture quality dimensions those checks miss (see below).
-
-## Setup with uv
-
-Install [uv](https://docs.astral.sh/uv/) once on the machine, then from repo:
-
-```bash
-cd evals
-
-# If you still have the old generic name, replace it:
-# rm -rf .venv
-
-uv venv .venv-evals
-source .venv-evals/bin/activate          # Windows: .venv-evals\Scripts\activate
-uv pip install -r requirements.txt
-uv pip install pytest                    # only needed for unit tests
-```
-
-## Run against a live gateway
-
-Terminal A — gateway (example Ollama lab):
-
-```bash
-cd apps/gateway
-source .venv/bin/activate
-export OLLAMA_BASE_URL=http://192.168.1.131:11434
-export DEFAULT_MODEL=mistral:7b
-uvicorn app.main:app --host 0.0.0.0 --port 8080
-```
-
-Terminal B — evals:
-
-```bash
-cd evals
-source .venv-evals/bin/activate
-export GATEWAY_URL=http://127.0.0.1:8080
-python run_eval.py --suite smoke
-```
-
-Exit code `0` if all cases passed; `1` if any failed; `2` if suite missing.
-
-On failure the CLI prints each check (`name`, ok/FAIL, detail). The JSON report under `evals/reports/` includes `summary.failed_by_check`.
+`run_eval.py` exit codes: `0` all passed, `1` any failed, `2` suite missing.  
+On failure the CLI prints each check; reports include `summary.failed_by_check`.
 
 ## Human feedback (rubrics / pairwise)
 
@@ -108,10 +154,7 @@ Automatic checks do not measure “was this answer good?”. Human feedback fill
 1. **Rubric scores** (1–5) against versioned criteria with behavioral anchors — see `rubrics/response_quality_v1.json`.
 2. **Pairwise preference** (A / B / tie) with randomized on-screen order (`order_presented` is stored to document position bias controls).
 
-### Score a response from a smoke report
-
 ```bash
-# Non-interactive (scriptable)
 python annotate.py rubric \
   --report reports/smoke_XXXX.json \
   --case-id smoke-refusal-length \
@@ -119,16 +162,6 @@ python annotate.py rubric \
   --scores '{"instruction_following":1,"clarity":4,"concision":2,"safety_basic":5}' \
   --notes "Model ignored solo OK"
 
-# Interactive (TTY): omit --scores; anchors are printed per criterion
-python annotate.py rubric --report reports/smoke_XXXX.json \
-  --case-id smoke-refusal-length --rater-id raul
-```
-
-Writes JSONL under `feedback/rubric/` (gitignored).
-
-### Pairwise preference
-
-```bash
 python annotate.py pairwise \
   --prompt "Di solo la palabra OK." \
   --a "OK" \
@@ -136,77 +169,37 @@ python annotate.py pairwise \
   --rater-id raul \
   --winner A \
   --rationale "A obeys the hard constraint"
-```
 
-By default the CLI shuffles display order; pass `--no-shuffle` only for debugging.
-
-### Summarize
-
-```bash
 python annotate.py summarize
 ```
 
-Includes local annotations plus committed samples under `feedback/examples/`. Output: criterion means, simple inter-rater agreement when ≥2 raters scored the same case/response, pairwise win rates.
-
-Committed examples are **lab illustrations**, not production quality claims.
+Committed examples under `feedback/examples/` are **lab illustrations**, not production quality claims.
 
 ## Promotion gate (baseline vs candidate)
 
-A **promotion gate** decides whether a **candidate** run may replace a **baseline** under a versioned policy (`gates/smoke_promote_v1.json`).
+Policy: `gates/smoke_promote_v1.json`.
 
 Automatic rules (lab defaults):
 - candidate transport `errors == 0`
 - `pass_rate >= 0.66`
 - pass-rate delta vs baseline not worse than `-0.34`
 - hard cases must PASS: `smoke-greeting-es`, `smoke-json-keys`
-- `smoke-refusal-length` is a **soft** case (observed, does not block alone — real CPU flakiness)
+- `smoke-refusal-length` is a **soft** case (observed, does not block alone)
 
-Human rules are optional (`--human`). Lab pairwise convention when used: **A = candidate**, **B = baseline**. If human data is missing, those rules **skip** (do not false-block).
+Human rules are optional (`--human`). Pairwise convention when used: **A = candidate**, **B = baseline**. Missing human data → rules **skip** (do not false-block).
 
-### Dry-run with committed fixtures (no gateway)
+Exit codes: `0` promote, `1` block, `2` bad usage/missing files.
 
-```bash
-# Expect PROMOTE (exit 0)
-python promote_gate.py \
-  --policy gates/smoke_promote_v1.json \
-  --baseline gates/fixtures/baseline_smoke.json \
-  --candidate gates/fixtures/candidate_smoke_promote.json
-echo "exit=$?"
-
-# Expect BLOCK (exit 1) — JSON hard case failed
-python promote_gate.py \
-  --policy gates/smoke_promote_v1.json \
-  --baseline gates/fixtures/baseline_smoke.json \
-  --candidate gates/fixtures/candidate_smoke_block.json
-echo "exit=$?"
-```
-
-### Live lab flow
-
-```bash
-# Run A → save as baseline
-python run_eval.py --suite smoke
-cp reports/smoke_XXXX.json reports/smoke_baseline.json
-
-# Change model/backend, run B → candidate
-python run_eval.py --suite smoke
-cp reports/smoke_YYYY.json reports/smoke_candidate.json
-
-python promote_gate.py \
-  --baseline reports/smoke_baseline.json \
-  --candidate reports/smoke_candidate.json
-```
-
-Exit codes: `0` promote, `1` block, `2` bad usage/missing files. Decision JSON under `reports/gates/`.
-
-## Unit tests (no gateway)
-
-From `evals/` with `.venv-evals` active:
+## Unit tests & CI
 
 ```bash
 PYTHONPATH=.. pytest -v
 ```
 
-## Next (same hito)
+GitHub Actions workflow `.github/workflows/evals-ci.yml` runs these unit tests on changes under `evals/**`. It does **not** call a live model.
 
-- Docs/demo polish for the full eval + feedback + gate loop
+## Out of scope here
+
+- GPU benchmark tables / Vast.ai runs (separate milestone)
+- Model registry / MLflow artifact store
+- Auth, multi-tenant annotation UI
