@@ -1,6 +1,6 @@
 # Gateway eval harness (Hito 5)
 
-Offline evaluation of the inference gateway: versioned cases → call `/chat` → automatic checks → JSON report.
+Offline evaluation of the inference gateway: versioned cases → call `/chat` → automatic checks → JSON report → optional **human feedback** (rubrics / pairwise).
 
 This is **quality** evaluation (did the answer satisfy expectations?), not serving benchmarks (TTFT/TPOT). Those live under the gateway `/metrics`.
 
@@ -9,10 +9,13 @@ This is **quality** evaluation (did the answer satisfy expectations?), not servi
 ```text
 evals/
   cases/           # JSONL suites (one case per line)
-  harness/         # case schema, checks, gateway client, reports
+  harness/         # case schema, checks, gateway client, reports, feedback helpers
+  rubrics/         # versioned human rubrics (criteria + behavioral anchors)
+  feedback/        # human annotations (rubric/ + pairwise/; examples/ committed)
   reports/         # generated run reports (gitignored)
-  run_eval.py      # CLI entrypoint
-  tests/           # unit tests for checks/loader (no live gateway required)
+  run_eval.py      # automatic eval CLI
+  annotate.py      # human feedback CLI
+  tests/           # unit tests (no live gateway required)
   .venv-evals/     # local uv venv for this package (gitignored; create yourself)
 ```
 
@@ -52,7 +55,7 @@ Each line is one JSON object:
 
 JSON checks accept a fenced markdown code block (`json` language tag optional) when the model wraps the payload; the check detail records `fence` vs `raw`.
 
-Heuristic substring checks are still useful for smoke prompts. Structural JSON checks are stronger for “API contract” style cases. Human rubrics come in a later H5 task.
+Heuristic and structural checks are automatic. Human rubrics / pairwise preferences capture quality dimensions those checks miss (see below).
 
 ## Setup with uv
 
@@ -95,6 +98,55 @@ Exit code `0` if all cases passed; `1` if any failed; `2` if suite missing.
 
 On failure the CLI prints each check (`name`, ok/FAIL, detail). The JSON report under `evals/reports/` includes `summary.failed_by_check`.
 
+## Human feedback (rubrics / pairwise)
+
+Automatic checks do not measure “was this answer good?”. Human feedback fills that gap with:
+
+1. **Rubric scores** (1–5) against versioned criteria with behavioral anchors — see `rubrics/response_quality_v1.json`.
+2. **Pairwise preference** (A / B / tie) with randomized on-screen order (`order_presented` is stored to document position bias controls).
+
+### Score a response from a smoke report
+
+```bash
+# Non-interactive (scriptable)
+python annotate.py rubric \
+  --report reports/smoke_XXXX.json \
+  --case-id smoke-refusal-length \
+  --rater-id raul \
+  --scores '{"instruction_following":1,"clarity":4,"concision":2,"safety_basic":5}' \
+  --notes "Model ignored solo OK"
+
+# Interactive (TTY): omit --scores; anchors are printed per criterion
+python annotate.py rubric --report reports/smoke_XXXX.json \
+  --case-id smoke-refusal-length --rater-id raul
+```
+
+Writes JSONL under `feedback/rubric/` (gitignored).
+
+### Pairwise preference
+
+```bash
+python annotate.py pairwise \
+  --prompt "Di solo la palabra OK." \
+  --a "OK" \
+  --b "Por supuesto, aquí tienes la confirmación..." \
+  --rater-id raul \
+  --winner A \
+  --rationale "A obeys the hard constraint"
+```
+
+By default the CLI shuffles display order; pass `--no-shuffle` only for debugging.
+
+### Summarize
+
+```bash
+python annotate.py summarize
+```
+
+Includes local annotations plus committed samples under `feedback/examples/`. Output: criterion means, simple inter-rater agreement when ≥2 raters scored the same case/response, pairwise win rates.
+
+Committed examples are **lab illustrations**, not production quality claims.
+
 ## Unit tests (no gateway)
 
 From `evals/` with `.venv-evals` active:
@@ -103,14 +155,6 @@ From `evals/` with `.venv-evals` active:
 PYTHONPATH=.. pytest -v
 ```
 
-Or from repo root:
-
-```bash
-cd evals && source .venv-evals/bin/activate
-PYTHONPATH=.. pytest -v
-```
-
 ## Next (same hito)
 
-- Human feedback (rubrics / pairwise preferences)
-- Baseline vs candidate promotion gate
+- Baseline vs candidate promotion gate (consume automatic reports + human feedback)
