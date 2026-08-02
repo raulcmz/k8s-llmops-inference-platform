@@ -156,7 +156,8 @@ Important lab caveats:
 
 | Env var | Default | Purpose |
 |---|---|---|
-| `OLLAMA_BASE_URL` | `http://ollama:11434` | Backend base URL |
+| `BACKEND_TYPE` | `ollama` | LLM adapter to load (`ollama` today; `vllm` next) |
+| `OLLAMA_BASE_URL` | `http://ollama:11434` | Ollama base URL |
 | `DEFAULT_MODEL` | `mistral:7b` | Model when request omits `model` |
 | `READY_CHECK_TIMEOUT_SECONDS` | `2` | Readiness probe budget |
 | `MODELS_TIMEOUT_SECONDS` | `10` | `/models` timeout |
