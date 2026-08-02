@@ -8,4 +8,8 @@ def test_load_smoke_suite():
     cases = load_cases_jsonl(path)
     assert len(cases) == 3
     assert cases[0].id == "smoke-greeting-es"
-    assert cases[1].expect.contains_all
+    json_case = cases[1]
+    assert json_case.id == "smoke-json-keys"
+    assert json_case.expect.json_valid is True
+    assert json_case.expect.json_required_keys == ["name", "city"]
+    assert json_case.expect.json_equals == {"name": "Ana", "city": "Madrid"}
