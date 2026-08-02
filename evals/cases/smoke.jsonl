@@ -1,0 +1,3 @@
+{"id": "smoke-greeting-es", "prompt": "Responde solo con una frase corta en español saludando.", "expect": {"contains_any": ["Hola", "hola", "Buenas", "buenas"], "min_chars": 3}}
+{"id": "smoke-json-keys", "prompt": "Devuelve ÚNICAMENTE un JSON válido con las claves name y city. name=Ana city=Madrid. Sin markdown ni texto extra.", "expect": {"contains_all": ["\"name\"", "\"city\"", "Ana", "Madrid"], "min_chars": 10}}
+{"id": "smoke-refusal-length", "prompt": "Di solo la palabra OK.", "expect": {"contains_any": ["OK", "Ok", "ok"], "max_chars": 20}}
