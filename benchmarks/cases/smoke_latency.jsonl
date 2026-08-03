@@ -1,0 +1,3 @@
+{"id": "bench-short-es", "prompt": "Di hola en una frase corta en español.", "repeats": 1}
+{"id": "bench-json-tiny", "prompt": "Devuelve solo JSON {\"ok\": true} sin texto extra.", "repeats": 1}
+{"id": "bench-explain-short", "prompt": "Explica en dos frases qué es latencia TTFT.", "repeats": 1}

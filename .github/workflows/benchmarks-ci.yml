@@ -1,0 +1,40 @@
+name: benchmarks-ci
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "benchmarks/**"
+      - ".github/workflows/benchmarks-ci.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "benchmarks/**"
+      - ".github/workflows/benchmarks-ci.yml"
+
+jobs:
+  test:
+    name: benchmarks-unit-tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: benchmarks/requirements.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r benchmarks/requirements.txt pytest respx
+
+      - name: Run benchmarks unit tests
+        working-directory: benchmarks
+        env:
+          PYTHONPATH: ..
+        run: python -m pytest -v
