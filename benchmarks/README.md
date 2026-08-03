@@ -1,56 +1,95 @@
 # Serving benchmarks (Hito 4)
 
-Measure **serving latency** against the inference gateway (`/chat/stream`):
+This folder answers a simple question:
 
-- **TTFT** (*Time To First Token*) — client time until the first non-empty `response` chunk
-- **TPOT** (*Time Per Output Token*) — client estimate after the first token
-- **E2E** (*End-to-End*) — full stream wall time
+> **When someone chats with our gateway, how long do they wait?**
 
-This is **not** quality evaluation (`evals/`). Soft/hard answer checks live there.
+It does **not** judge if the answer is smart or correct. That is `evals/` (quality).  
+Here we only measure **speed**.
 
-## Lab demo (H4-T1)
+## Words you will see (plain language)
 
-### Unit tests (no gateway)
+| Word | Meaning in this lab |
+|---|---|
+| **Gateway** | Small web service (`:8080`) that sits in front of the model |
+| **Streaming** | The answer arrives word-by-word (chunks), not all at once |
+| **TTFT** | *Time To First Token* — wait until the **first** bit of answer appears |
+| **TPOT** | *Time Per Output Token* — average wait **per word/token** after the first |
+| **E2E** | *End-to-End* — time from “send question” until “answer fully done” |
+| **Concurrency** | How many chats we keep open **at the same time** |
+| **p50** | “Typical” value (half of the runs were faster, half slower) |
+| **p95** | “Slow tail” (about 95% were faster than this; the annoying waits) |
+| **req/s** | How many successful answers we finished **per second** in a batch |
+
+Analogy: a café.
+
+- **TTFT** = time until the first sip  
+- **E2E** = time until you finish the drink  
+- **Concurrency** = how many customers the barista tries to serve together  
+- **p95** = the unlucky customer who waited the longest (almost)
+
+## Setup (once)
 
 ```bash
 cd benchmarks
 uv venv .venv-bench
-source .venv-bench/bin/activate
+source .venv-bench/bin/activate          # Windows: .venv-bench\Scripts\activate
 uv pip install -r requirements.txt
-uv pip install pytest respx
-PYTHONPATH=.. pytest -v
+uv pip install pytest respx              # for unit tests
 ```
 
-### Live smoke (gateway + Ollama lab)
+## Mode A — Simple (one after another)
+
+Good first check. Three short prompts, one at a time.
 
 ```bash
-# Terminal A: apps/gateway with OLLAMA_BASE_URL / DEFAULT_MODEL
-# Terminal B:
-cd benchmarks
-source .venv-bench/bin/activate
 export GATEWAY_URL=http://127.0.0.1:8080
 python run_bench.py --suite smoke_latency \
   --metadata '{"hardware":"cpu-lab","backend":"ollama","model":"mistral:7b"}'
 ```
 
-Reports under `reports/` are **gitignored** (same rationale as `evals/reports/`).
+## Mode B — Concurrency sweep (H4-T2)
 
-Optional: compare client TTFT with Prometheus `llm_ttft_seconds` on the gateway `/metrics`.
+We repeat **one** prompt while increasing “how many at once”: 1, then 2, then 4.
+
+Why one prompt? So the only thing that changes is load, not the question text.
+
+```bash
+python run_bench.py --suite smoke_latency \
+  --case-id bench-short-es \
+  --concurrency 1,2,4 \
+  --requests-per-level 3 \
+  --write-markdown \
+  --metadata '{"hardware":"cpu-lab","backend":"ollama","model":"mistral:7b"}'
+```
+
+What you get:
+
+1. JSON report under `reports/` (machine-readable, **not** committed to git)
+2. Markdown table `.md` next to it (easy to read / paste into notes)
+
+On a **CPU** lab, higher concurrency often makes **TTFT p95 worse** (queue).  
+That is normal and useful: the table shows the pain.
+
+## Unit tests (no model needed)
+
+```bash
+PYTHONPATH=.. pytest -v
+```
 
 ## Layout
 
 ```text
 benchmarks/
-  cases/           # JSONL prompt suites
-  harness/         # loader, stream client, stats, report
-  reports/         # generated JSON (gitignored)
-  run_bench.py
-  tests/
-  .venv-bench/     # local uv venv (gitignored)
+  cases/           # list of prompts (JSONL = one JSON object per line)
+  harness/         # code that calls the gateway and does the math
+  reports/         # your run outputs (gitignored)
+  run_bench.py     # command you run
+  tests/           # automatic tests for the math/helpers
+  .venv-bench/     # private Python environment for this folder
 ```
 
 ## Next (same hito)
 
-- Concurrency sweeps (1/2/4)
-- Controlled-run metadata / publishable markdown tables
-- Optional Vast.ai + vLLM run (cost-aware; screenshots/docs when configured)
+- Controlled-run checklist / publishable notes template
+- Optional Vast.ai + vLLM run (paid GPU; screenshots when access is configured)
