@@ -228,6 +228,8 @@ python promote_gate.py \
 
 Generated reports under `evals/reports/` are gitignored (regenerable lab artifacts). See [`evals/README.md`](evals/README.md) for the full lab demo loop (live gateway optional).
 
+Serving speed benches live under [`benchmarks/`](benchmarks/) (TTFT/TPOT/E2E, concurrency). Full metric glossary + controlled-run checklist: [`benchmarks/docs/metrics.md`](benchmarks/docs/metrics.md).
+
 ## Kubernetes (lab)
 
 See [`k8s/README.md`](k8s/README.md) for apply order.
