@@ -7,20 +7,13 @@ This folder answers a simple question:
 It does **not** judge if the answer is smart or correct. That is `evals/` (quality).  
 Here we only measure **speed**.
 
-## Who runs what
-
-| Action | Who |
-|---|---|
-| Unit tests / git / PRs in the cloud agent | Agent |
-| Gateway, Ollama, live `run_bench.py`, filling result notes | **You on the VM** |
-
-## Docs (start here for metrics)
+## Docs (metrics & process)
 
 | Doc | What it is |
 |---|---|
 | [`docs/metrics.md`](docs/metrics.md) | **All important metrics** (client bench + Prometheus) in plain language |
 | [`docs/controlled-run-checklist.md`](docs/controlled-run-checklist.md) | Before / during / after checklist so numbers are trustworthy |
-| [`docs/results-template.md`](docs/results-template.md) | Empty form to paste a real run (every metric field listed) |
+| [`docs/results-template.md`](docs/results-template.md) | Empty form to record a real run (every metric field listed) |
 
 ## Words you will see (short list)
 
@@ -40,7 +33,7 @@ Full tables (including Prometheus series names): [`docs/metrics.md`](docs/metric
 
 Analogy: a café — TTFT = first sip; E2E = finish the drink; concurrency = customers at once; p95 ≈ the unlucky long wait.
 
-## Setup (once) — You on the VM
+## Setup (once)
 
 ```bash
 cd benchmarks
@@ -50,7 +43,9 @@ uv pip install -r requirements.txt
 uv pip install pytest respx              # for unit tests
 ```
 
-## Mode A — Simple (one after another) — You on the VM
+## Mode A — Simple (one after another)
+
+Requires a running gateway.
 
 ```bash
 export GATEWAY_URL=http://127.0.0.1:8080
@@ -58,7 +53,7 @@ python run_bench.py --suite smoke_latency \
   --metadata '{"hardware":"cpu-lab","backend":"ollama","model":"mistral:7b"}'
 ```
 
-## Mode B — Concurrency sweep — You on the VM
+## Mode B — Concurrency sweep
 
 ```bash
 python run_bench.py --suite smoke_latency \
@@ -74,15 +69,15 @@ Outputs (local, gitignored under `reports/`):
 1. JSON report  
 2. Markdown table (with `--write-markdown`)
 
-Then fill [`docs/results-template.md`](docs/results-template.md) using values from the report + optional `/metrics`.
+Record curated numbers with [`docs/results-template.md`](docs/results-template.md) (from the report + optional `/metrics`).
 
 ## Unit tests (no model needed)
-
-**You on the VM** (or CI / agent):
 
 ```bash
 PYTHONPATH=.. pytest -v
 ```
+
+CI runs these on changes under `benchmarks/**`.
 
 ## Layout
 
@@ -91,7 +86,7 @@ benchmarks/
   cases/           # prompts (JSONL)
   harness/         # client + stats + concurrency
   docs/            # metrics glossary, checklist, results template
-  results/         # optional curated notes you choose to commit
+  results/         # optional curated notes (commit only when intentional)
   reports/         # raw run outputs (gitignored)
   run_bench.py
   tests/
@@ -100,4 +95,4 @@ benchmarks/
 
 ## Next (same hito)
 
-- Optional Vast.ai + vLLM controlled run (paid GPU; screenshots when access is configured)
+- Optional Vast.ai + vLLM controlled run (paid GPU)

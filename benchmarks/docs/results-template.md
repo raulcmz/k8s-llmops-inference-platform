@@ -90,13 +90,13 @@ One row per concurrency level.
 
 ## 5. Gateway Prometheus snapshot (optional but recommended)
 
-**You on the VM** can capture after the bench:
+After the bench:
 
 ```bash
 curl -sS http://127.0.0.1:8080/metrics | rg 'llm_'
 ```
 
-Record either histogram summaries you care about or a short note (“scraped, see local file”).
+Record histogram summaries of interest or a short note (“scraped, see local file”).
 
 | Series | What you observed / note |
 |---|---|
